@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/auth_db
+    username: postgres
+    password: postgres
+
+  kafka:
+    bootstrap-servers: kafka:9092
+
+  redis:
+    host: redis
+    port: 6379
+
+server:
+  port: 8080
+
+logging:
+  level:
+    root: INFO
+    com.stock.authservice: INFO
