@@ -12,7 +12,6 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class SessionCreatedEvent {
-
     private String sessionId;
     private String userId;
     private String username;

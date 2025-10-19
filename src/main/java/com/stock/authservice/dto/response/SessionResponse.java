@@ -18,9 +18,7 @@ public class SessionResponse {
     private String ipAddress;
     private String userAgent;
     private String deviceType;
-    private String location;
     private Boolean isActive;
-    private Boolean isCurrent;
     private LocalDateTime lastActivity;
     private LocalDateTime expiresAt;
     private LocalDateTime createdAt;

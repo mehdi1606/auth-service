@@ -6,18 +6,17 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.Set;
-
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class RoleCreateRequest {
+public class VerifyMfaRequest {
 
-    @NotBlank(message = "Role name is required")
-    private String name;
+    @NotBlank(message = "Temporary token is required")
+    private String tempToken;
 
-    private String description;
-    private Boolean isSystem;
-    private Set<String> permissionIds;
+    @NotBlank(message = "MFA code is required")
+    private String mfaCode;
+
+    private String deviceType;
 }

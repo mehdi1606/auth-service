@@ -7,7 +7,7 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "password_reset_tokens",
+@Table(name = "email_verification_tokens",
         indexes = {
                 @Index(name = "idx_token", columnList = "token"),
                 @Index(name = "idx_user_id", columnList = "user_id")
@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PasswordResetToken {
+public class EmailVerificationToken {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -29,6 +29,9 @@ public class PasswordResetToken {
     @Column(nullable = false, unique = true, length = 255)
     private String token;
 
+    @Column(name = "email", nullable = false, length = 100)
+    private String email;
+
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
@@ -36,11 +39,8 @@ public class PasswordResetToken {
     @Builder.Default
     private Boolean isUsed = false;
 
-    @Column(name = "used_at")
-    private LocalDateTime usedAt;
-
-    @Column(name = "ip_address", length = 45)
-    private String ipAddress;
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -60,8 +60,8 @@ public class PasswordResetToken {
         return !isUsed && !isExpired();
     }
 
-    public void markAsUsed() {
+    public void markAsVerified() {
         this.isUsed = true;
-        this.usedAt = LocalDateTime.now();
+        this.verifiedAt = LocalDateTime.now();
     }
 }

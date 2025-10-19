@@ -8,11 +8,13 @@ import org.hibernate.annotations.UpdateTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "user_sessions", indexes = {
-        @Index(name = "idx_session_user", columnList = "user_id"),
-        @Index(name = "idx_session_token", columnList = "session_token"),
-        @Index(name = "idx_session_active", columnList = "is_active")
-})
+@Table(name = "user_sessions",
+        indexes = {
+                @Index(name = "idx_session_token", columnList = "session_token"),
+                @Index(name = "idx_user_id", columnList = "user_id"),
+                @Index(name = "idx_is_active", columnList = "is_active")
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -23,11 +25,11 @@ public class UserSession {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
+    @Column(name = "session_token", nullable = false, unique = true, length = 255)
+    private String sessionToken;
+
     @Column(name = "user_id", nullable = false)
     private String userId;
-
-    @Column(name = "session_token", nullable = false, unique = true)
-    private String sessionToken;
 
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
@@ -38,18 +40,21 @@ public class UserSession {
     @Column(name = "device_type", length = 50)
     private String deviceType;
 
-    @Column(name = "location", length = 255)
-    private String location;
-
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
 
-    @Column(name = "last_activity")
+    @Column(name = "last_activity", nullable = false)
     private LocalDateTime lastActivity;
 
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
+
+    @Column(name = "terminated_at")
+    private LocalDateTime terminatedAt;
+
+    @Column(name = "termination_reason", length = 100)
+    private String terminationReason;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -73,11 +78,9 @@ public class UserSession {
         return isActive && !isExpired();
     }
 
-    public void updateActivity() {
-        this.lastActivity = LocalDateTime.now();
-    }
-
-    public void terminate() {
+    public void terminate(String reason) {
         this.isActive = false;
+        this.terminatedAt = LocalDateTime.now();
+        this.terminationReason = reason;
     }
 }

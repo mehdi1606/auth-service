@@ -40,27 +40,14 @@ public final class IpAddressUtil {
     // ==================== IP EXTRACTION ====================
 
     public static String getClientIpAddress(HttpServletRequest request) {
-        if (request == null) {
-            return "unknown";
-        }
-
-        // Try to get IP from various headers
         for (String header : IP_HEADER_CANDIDATES) {
             String ip = request.getHeader(header);
-            if (isValidIp(ip)) {
-                // X-Forwarded-For may contain multiple IPs, take the first one
-                if (ip.contains(",")) {
-                    ip = ip.split(",")[0].trim();
-                }
-                return ip;
+            if (ip != null && !ip.isEmpty() && !"unknown".equalsIgnoreCase(ip)) {
+                return ip.split(",")[0].trim();
             }
         }
-
-        // Fallback to remote address
-        String remoteAddr = request.getRemoteAddr();
-        return isValidIp(remoteAddr) ? remoteAddr : "unknown";
+        return request.getRemoteAddr();
     }
-
     public static String getClientIpAddressOrDefault(HttpServletRequest request, String defaultValue) {
         String ip = getClientIpAddress(request);
         return "unknown".equals(ip) ? defaultValue : ip;

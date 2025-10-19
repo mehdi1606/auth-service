@@ -10,8 +10,8 @@ import org.springframework.context.annotation.Configuration;
 public class JwtConfig {
 
     private String secret;
-    private long accessTokenExpiration;  // milliseconds
-    private long refreshTokenExpiration; // milliseconds
-    private long mfaTempTokenExpiration; // milliseconds
+    private Long accessTokenExpiration;
+    private Long refreshTokenExpiration;
+    private Long mfaTempTokenExpiration;
     private String issuer;
 }

@@ -9,33 +9,16 @@ public class SecurityContextHelper {
 
     public String getCurrentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return null;
+        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails) {
+            return ((CustomUserDetails) authentication.getPrincipal()).getUsername();
         }
-
-        Object principal = authentication.getPrincipal();
-
-        if (principal instanceof CustomUserDetails) {
-            return ((CustomUserDetails) principal).getUsername();
-        }
-
-        return principal.toString();
+        return "system";
     }
-
     public String getCurrentUserId() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return null;
+        if (authentication != null && authentication.getPrincipal() instanceof CustomUserDetails) {
+            return ((CustomUserDetails) authentication.getPrincipal()).getId();
         }
-
-        Object principal = authentication.getPrincipal();
-
-        if (principal instanceof CustomUserDetails) {
-            return ((CustomUserDetails) principal).getId();
-        }
-
         return null;
     }
 
@@ -81,4 +64,5 @@ public class SecurityContextHelper {
         return authentication.getAuthorities().stream()
                 .anyMatch(authority -> authority.getAuthority().equals(permission));
     }
+
 }

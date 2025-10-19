@@ -14,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -23,8 +22,6 @@ public class TokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtTokenProvider jwtTokenProvider;
-
-    // ==================== REFRESH TOKEN MANAGEMENT ====================
 
     @Transactional
     public RefreshToken createRefreshToken(User user, String ipAddress, String userAgent) {
@@ -37,8 +34,8 @@ public class TokenService {
 
         RefreshToken refreshToken = RefreshToken.builder()
                 .token(token)
-                .user(user)
-                .expiresAt(DateTimeUtil.addDays(LocalDateTime.now(), 7)) // 7 days
+                .userId(user.getId())
+                .expiresAt(DateTimeUtil.addDays(LocalDateTime.now(), 7))
                 .ipAddress(ipAddress)
                 .userAgent(userAgent)
                 .isRevoked(false)
@@ -54,14 +51,12 @@ public class TokenService {
         RefreshToken refreshToken = refreshTokenRepository.findByToken(token)
                 .orElseThrow(() -> new TokenInvalidException("Invalid refresh token"));
 
-        if (refreshToken.getIsRevoked()) {
-            log.warn("Attempted to use revoked refresh token");
-            throw new TokenInvalidException("Refresh token has been revoked");
+        if (refreshToken.isExpired()) {
+            throw new TokenExpiredException("Refresh token has expired");
         }
 
-        if (refreshToken.getExpiresAt().isBefore(LocalDateTime.now())) {
-            log.warn("Attempted to use expired refresh token");
-            throw new TokenExpiredException("Refresh token has expired");
+        if (refreshToken.getIsRevoked()) {
+            throw new TokenInvalidException("Refresh token has been revoked");
         }
 
         return refreshToken;
@@ -69,67 +64,23 @@ public class TokenService {
 
     @Transactional
     public void revokeRefreshToken(String token) {
-        log.info("Revoking refresh token");
+        log.debug("Revoking refresh token");
 
-        Optional<RefreshToken> refreshTokenOpt = refreshTokenRepository.findByToken(token);
-
-        if (refreshTokenOpt.isPresent()) {
-            RefreshToken refreshToken = refreshTokenOpt.get();
-            refreshToken.setIsRevoked(true);
-            refreshToken.setRevokedAt(LocalDateTime.now());
+        refreshTokenRepository.findByToken(token).ifPresent(refreshToken -> {
+            refreshToken.revoke();
             refreshTokenRepository.save(refreshToken);
-            log.info("Refresh token revoked successfully");
-        }
+        });
     }
 
     @Transactional
     public void revokeAllUserRefreshTokens(String userId) {
         log.info("Revoking all refresh tokens for user: {}", userId);
-
-        refreshTokenRepository.findByUserId(userId).forEach(token -> {
-            token.setIsRevoked(true);
-            token.setRevokedAt(LocalDateTime.now());
-            refreshTokenRepository.save(token);
-        });
+        refreshTokenRepository.revokeAllUserTokens(userId, LocalDateTime.now());
     }
 
     @Transactional
     public void cleanupExpiredTokens() {
         log.info("Cleaning up expired refresh tokens");
-
-        LocalDateTime now = LocalDateTime.now();
-        int deletedCount = refreshTokenRepository.deleteByExpiresAtBefore(now);
-
-        log.info("Deleted {} expired refresh tokens", deletedCount);
-    }
-
-    // ==================== PASSWORD RESET TOKEN ====================
-
-    public String generatePasswordResetToken() {
-        return RandomTokenGenerator.generatePasswordResetToken();
-    }
-
-    public String generateEmailVerificationToken() {
-        return RandomTokenGenerator.generateEmailVerificationToken();
-    }
-
-    // ==================== MFA TEMP TOKEN ====================
-
-    public String generateMfaTempToken(String username) {
-        return jwtTokenProvider.generateMfaTempToken(username);
-    }
-
-    public boolean validateMfaTempToken(String token) {
-        try {
-            jwtTokenProvider.validateToken(token);
-            return true;
-        } catch (Exception e) {
-            log.error("MFA temp token validation failed: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    public String getUsernameFromMfaTempToken(String token) {
-        return jwtTokenProvider.getUsernameFromToken(token);
+        refreshTokenRepository.deleteExpiredTokens(LocalDateTime.now());
     }
 }

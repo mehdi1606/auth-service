@@ -3,17 +3,16 @@ package com.stock.authservice.service;
 import com.stock.authservice.constants.SecurityConstants;
 import com.stock.authservice.dto.request.*;
 import com.stock.authservice.dto.response.*;
-import com.stock.authservice.entity.AuditLog;
 import com.stock.authservice.entity.RefreshToken;
-import com.stock.authservice.entity.UserSession;
 import com.stock.authservice.entity.User;
+import com.stock.authservice.entity.UserSession;
 import com.stock.authservice.event.AuthEventPublisher;
-import com.stock.authservice.event.dto.*;
+import com.stock.authservice.event.dto.UserLoginEvent;
+import com.stock.authservice.event.dto.UserLogoutEvent;
 import com.stock.authservice.exception.*;
 import com.stock.authservice.repository.UserRepository;
 import com.stock.authservice.security.CustomUserDetails;
 import com.stock.authservice.security.JwtTokenProvider;
-import com.stock.authservice.util.DateTimeUtil;
 import com.stock.authservice.util.IpAddressUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,26 +55,24 @@ public class AuthService {
         User user = userRepository.findByUsernameOrEmail(request.getUsernameOrEmail(), request.getUsernameOrEmail())
                 .orElseThrow(() -> {
                     auditLogService.logFailedLogin(request.getUsernameOrEmail(), ipAddress, "User not found");
-                    authEventPublisher.publishLoginFailed(UserLoginFailedEvent.builder()
-                            .username(request.getUsernameOrEmail())
-                            .ipAddress(ipAddress)
-                            .userAgent(userAgent)
-                            .failureReason("User not found")
-                            .attemptTime(LocalDateTime.now())
-                            .build());
                     return new InvalidCredentialsException();
                 });
 
         // Check if account is locked
-        if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(LocalDateTime.now())) {
-            log.warn("Login attempt for locked account: {}", user.getUsername());
-            throw new AccountLockedException(user.getLockedUntil());
+        if (user.getIsLocked() && !user.isAccountNonLocked()) {
+            auditLogService.logFailedLogin(user.getUsername(), ipAddress, "Account locked");
+            throw new AccountLockedException("Account is locked until " + user.getLockedUntil());
+        }
+
+        // Check if email is verified
+        if (!user.getIsEmailVerified()) {
+            throw new EmailNotVerifiedException("Email not verified. Please verify your email first.");
         }
 
         // Check if account is active
         if (!user.getIsActive()) {
-            log.warn("Login attempt for disabled account: {}", user.getUsername());
-            throw new AccountDisabledException();
+            auditLogService.logFailedLogin(user.getUsername(), ipAddress, "Account deactivated");
+            throw new InvalidCredentialsException("Account is deactivated");
         }
 
         try {
@@ -88,18 +84,13 @@ public class AuthService {
                     )
             );
 
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+            // Reset failed attempts on successful login
+            user.resetFailedAttempts();
+            userRepository.save(user);
 
-            // Reset failed login attempts
-            if (user.getFailedLoginAttempts() > 0) {
-                user.setFailedLoginAttempts(0);
-                user.setLockedUntil(null);
-                userRepository.save(user);
-            }
-
-            // Check if MFA is enabled
-            if (user.getMfaEnabled()) {
-                String tempToken = tokenService.generateMfaTempToken(user.getUsername());
+            // Check MFA
+            if (mfaService.isMfaRequired(user)) {
+                String tempToken = jwtTokenProvider.generateMfaTempToken(user.getUsername());
 
                 log.info("MFA required for user: {}", user.getUsername());
 
@@ -170,11 +161,6 @@ public class AuthService {
             throw new DuplicateResourceException("User", "email", request.getEmail());
         }
 
-        // Check password match
-        if (!request.getPassword().equals(request.getConfirmPassword())) {
-            throw new PasswordMismatchException();
-        }
-
         // Create user
         User user = User.builder()
                 .username(request.getUsername())
@@ -190,22 +176,15 @@ public class AuthService {
                 .failedLoginAttempts(0)
                 .build();
 
-        user = userRepository.save(user);
-
-        // Assign default role (handled in UserService)
+        // Assign default role
         userService.assignDefaultRole(user);
 
-        // Generate email verification token
-        String verificationToken = tokenService.generateEmailVerificationToken();
-        user.setEmailVerificationToken(verificationToken);
-        user.setEmailVerificationExpiry(DateTimeUtil.addHours(LocalDateTime.now(), 24));
-        userRepository.save(user);
-
-        // TODO: Send verification email (implement email service)
+        user = userRepository.save(user);
 
         log.info("User registered successfully: {}", user.getUsername());
 
-        return ApiResponse.success("Registration successful. Please verify your email.",
+        return ApiResponse.success(
+                "User registered successfully. Please verify your email.",
                 userService.mapToUserResponse(user));
     }
 
@@ -261,9 +240,6 @@ public class AuthService {
         // Revoke all refresh tokens
         tokenService.revokeAllUserRefreshTokens(user.getId());
 
-        // Terminate active sessions
-        sessionService.terminateUserSessions(user.getId(), "USER_LOGOUT");
-
         // Audit log
         auditLogService.logLogout(user.getId(), user.getUsername(), ipAddress);
 
@@ -271,207 +247,158 @@ public class AuthService {
         authEventPublisher.publishUserLogout(UserLogoutEvent.builder()
                 .userId(user.getId())
                 .username(user.getUsername())
-                .ipAddress(ipAddress)
                 .logoutTime(LocalDateTime.now())
-                .logoutReason("MANUAL")
+                .reason("USER_LOGOUT")
                 .build());
 
-        log.info("User logged out successfully: {}", username);
+        log.info("User logged out successfully: {}", user.getUsername());
 
         return ApiResponse.success("Logout successful", null);
     }
 
-    // ==================== PASSWORD RESET ====================
+    // ==================== MFA VERIFICATION ====================
 
     @Transactional
-    public ApiResponse<Void> forgotPassword(PasswordResetRequest request) {
-        log.info("Password reset request for email: {}", request.getEmail());
+    public LoginResponse verifyMfa(VerifyMfaRequest request, HttpServletRequest httpRequest) {
+        log.info("MFA verification request");
 
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new ResourceNotFoundException("User", "email", request.getEmail()));
-
-        // Generate reset token
-        String resetToken = tokenService.generatePasswordResetToken();
-        user.setPasswordResetToken(resetToken);
-        user.setPasswordResetExpiry(DateTimeUtil.addHours(LocalDateTime.now(), 1));
-        userRepository.save(user);
-
-        // TODO: Send password reset email
-
-        // Publish event
-        authEventPublisher.publishPasswordResetRequested(PasswordResetRequestedEvent.builder()
-                .userId(user.getId())
-                .username(user.getUsername())
-                .email(user.getEmail())
-                .ipAddress(request.getIpAddress())
-                .resetToken(resetToken)
-                .requestedAt(LocalDateTime.now())
-                .expiresAt(user.getPasswordResetExpiry())
-                .build());
-
-        log.info("Password reset email sent to: {}", request.getEmail());
-
-        return ApiResponse.success("Password reset link has been sent to your email", null);
-    }
-
-    @Transactional
-    public ApiResponse<Void> resetPassword(PasswordResetConfirmRequest request) {
-        log.info("Password reset confirmation");
-
-        User user = userRepository.findByPasswordResetToken(request.getToken())
-                .orElseThrow(() -> new TokenInvalidException("Invalid reset token"));
-
-        // Check token expiry
-        if (user.getPasswordResetExpiry().isBefore(LocalDateTime.now())) {
-            throw new TokenExpiredException("Password reset token has expired");
-        }
-
-        // Check password match
-        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
-            throw new PasswordMismatchException();
-        }
-
-        // Update password
-        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
-        user.setPasswordResetToken(null);
-        user.setPasswordResetExpiry(null);
-        user.setPasswordChangedAt(LocalDateTime.now());
-        userRepository.save(user);
-
-        // Revoke all tokens and sessions
-        tokenService.revokeAllUserRefreshTokens(user.getId());
-        sessionService.terminateUserSessions(user.getId(), "PASSWORD_RESET");
-
-        // Publish event
-        authEventPublisher.publishPasswordChanged(PasswordChangedEvent.builder()
-                .userId(user.getId())
-                .username(user.getUsername())
-                .email(user.getEmail())
-                .ipAddress(request.getIpAddress())
-                .changedAt(LocalDateTime.now())
-                .wasReset(true)
-                .build());
-
-        log.info("Password reset successfully for user: {}", user.getUsername());
-
-        return ApiResponse.success("Password reset successful", null);
-    }
-
-    // ==================== CHANGE PASSWORD ====================
-
-    @Transactional
-    public ApiResponse<Void> changePassword(PasswordChangeRequest request, String username) {
-        log.info("Password change request for user: {}", username);
+        String username = jwtTokenProvider.getUsernameFromToken(request.getTempToken());
+        String ipAddress = IpAddressUtil.getClientIpAddress(httpRequest);
+        String userAgent = httpRequest.getHeader("User-Agent");
 
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "username", username));
 
-        // Verify current password
-        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
-            throw new InvalidCredentialsException("Current password is incorrect");
+        // Validate MFA code
+        if (!mfaService.validateMfaCode(user, request.getMfaCode())) {
+            auditLogService.logFailedLogin(username, ipAddress, "Invalid MFA code");
+            throw new InvalidCredentialsException("Invalid MFA code");
         }
 
-        // Check password match
-        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
-            throw new PasswordMismatchException();
-        }
+        // Generate tokens
+        CustomUserDetails userDetails = CustomUserDetails.build(user);
+        Authentication authentication = new UsernamePasswordAuthenticationToken(
+                userDetails, null, userDetails.getAuthorities()
+        );
 
-        // Check if new password is same as current
-        if (passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
-            throw new PasswordValidationException(
-                    java.util.List.of("New password must be different from current password")
-            );
-        }
+        String accessToken = jwtTokenProvider.generateAccessToken(authentication);
+        RefreshToken refreshToken = tokenService.createRefreshToken(user, ipAddress, userAgent);
 
-        // Update password
-        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
-        user.setPasswordChangedAt(LocalDateTime.now());
+        // Create session
+        UserSession session = sessionService.createSession(user, accessToken, ipAddress, userAgent, request.getDeviceType());
+
+        // Update last login
+        user.setLastLogin(LocalDateTime.now());
         userRepository.save(user);
 
-        // Revoke all tokens except current
-        tokenService.revokeAllUserRefreshTokens(user.getId());
+        // Audit log
+        auditLogService.logSuccessfulLogin(user.getId(), user.getUsername(), ipAddress);
 
         // Publish event
-        authEventPublisher.publishPasswordChanged(PasswordChangedEvent.builder()
+        authEventPublisher.publishUserLogin(UserLoginEvent.builder()
                 .userId(user.getId())
                 .username(user.getUsername())
                 .email(user.getEmail())
-                .changedAt(LocalDateTime.now())
-                .wasReset(false)
+                .ipAddress(ipAddress)
+                .userAgent(userAgent)
+                .deviceType(request.getDeviceType())
+                .loginTime(LocalDateTime.now())
+                .mfaUsed(true)
+                .sessionId(session.getId())
                 .build());
 
-        log.info("Password changed successfully for user: {}", username);
+        log.info("MFA verification successful for user: {}", user.getUsername());
 
-        return ApiResponse.success("Password changed successfully", null);
+        return LoginResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken.getToken())
+                .tokenType("Bearer")
+                .expiresIn(SecurityConstants.ACCESS_TOKEN_EXPIRATION / 1000)
+                .user(userService.mapToUserResponse(user))
+                .mfaRequired(false)
+                .build();
     }
 
-    // ==================== EMAIL VERIFICATION ====================
+    // ==================== PASSWORD MANAGEMENT ====================
+
+    @Transactional
+    public ApiResponse<Void> forgotPassword(PasswordResetRequest request) {
+        log.info("Forgot password request for: {}", request.getEmail());
+
+        // TODO: Implement password reset token generation and email
+        // 1. Find user by email
+        // 2. Generate password reset token
+        // 3. Save token to database
+        // 4. Send email with reset link
+
+        throw new UnsupportedOperationException("Password reset not implemented yet");
+    }
+
+    @Transactional
+    public ApiResponse<Void> resetPassword(PasswordResetConfirmRequest request) {
+        log.info("Reset password with token");
+
+        // TODO: Implement password reset
+        // 1. Validate reset token
+        // 2. Check if token is expired
+        // 3. Update user password
+        // 4. Invalidate token
+        // 5. Send confirmation email
+
+        throw new UnsupportedOperationException("Password reset not implemented yet");
+    }
+
+    @Transactional
+    public ApiResponse<Void> changePassword(PasswordChangeRequest request, String username) {
+        log.info("Change password for user: {}", username);
+
+        // TODO: Implement password change
+        // 1. Find user by username
+        // 2. Verify current password
+        // 3. Validate new password
+        // 4. Update password
+        // 5. Invalidate all sessions/tokens
+        // 6. Send notification email
+
+        throw new UnsupportedOperationException("Password change not implemented yet");
+    }
 
     @Transactional
     public ApiResponse<Void> verifyEmail(String token) {
-        log.info("Email verification request");
+        log.info("Email verification request with token");
 
-        User user = userRepository.findByEmailVerificationToken(token)
-                .orElseThrow(() -> new TokenInvalidException("Invalid verification token"));
+        // TODO: Implement email verification
+        // 1. Find token in database
+        // 2. Check if token is expired
+        // 3. Mark user email as verified
+        // 4. Delete/invalidate token
 
-        // Check token expiry
-        if (user.getEmailVerificationExpiry().isBefore(LocalDateTime.now())) {
-            throw new TokenExpiredException("Email verification token has expired");
-        }
-
-        // Check if already verified
-        if (user.getIsEmailVerified()) {
-            throw new EmailAlreadyVerifiedException();
-        }
-
-        // Mark as verified
-        user.setIsEmailVerified(true);
-        user.setEmailVerificationToken(null);
-        user.setEmailVerificationExpiry(null);
-        userRepository.save(user);
-
-        log.info("Email verified successfully for user: {}", user.getUsername());
-
-        return ApiResponse.success("Email verified successfully", null);
+        throw new UnsupportedOperationException("Email verification not implemented yet");
     }
 
     // ==================== HELPER METHODS ====================
 
     private void handleFailedLogin(User user, String ipAddress, String userAgent) {
-        user.setFailedLoginAttempts(user.getFailedLoginAttempts() + 1);
+        if (user == null) {
+            auditLogService.logFailedLogin("unknown", ipAddress, "Invalid username or password");
+            return;
+        }
 
-        auditLogService.logFailedLogin(user.getUsername(), ipAddress, "Invalid credentials");
+        user.incrementFailedAttempts();
 
         if (user.getFailedLoginAttempts() >= SecurityConstants.MAX_FAILED_LOGIN_ATTEMPTS) {
-            user.setLockedUntil(DateTimeUtil.addMinutes(LocalDateTime.now(),
-                    SecurityConstants.ACCOUNT_LOCKOUT_DURATION_MINUTES));
+            user.lock(SecurityConstants.ACCOUNT_LOCK_DURATION_MINUTES);
+            log.warn("Account locked for user: {}", user.getUsername());
 
-            log.warn("Account locked due to failed login attempts: {}", user.getUsername());
-
-            // Publish account locked event
-            authEventPublisher.publishAccountLocked(AccountLockedEvent.builder()
-                    .userId(user.getId())
-                    .username(user.getUsername())
-                    .email(user.getEmail())
-                    .ipAddress(ipAddress)
-                    .failedAttempts(user.getFailedLoginAttempts())
-                    .lockedAt(LocalDateTime.now())
-                    .lockedUntil(user.getLockedUntil())
-                    .lockReason("Too many failed login attempts")
-                    .build());
+            auditLogService.logAction(
+                    user.getId(),
+                    user.getUsername(),
+                    "ACCOUNT_LOCKED",
+                    ipAddress
+            );
         }
 
         userRepository.save(user);
-
-        // Publish failed login event
-        authEventPublisher.publishLoginFailed(UserLoginFailedEvent.builder()
-                .username(user.getUsername())
-                .ipAddress(ipAddress)
-                .userAgent(userAgent)
-                .failureReason("Invalid credentials")
-                .attemptCount(user.getFailedLoginAttempts())
-                .attemptTime(LocalDateTime.now())
-                .accountLocked(user.getLockedUntil() != null)
-                .build());
+        auditLogService.logFailedLogin(user.getUsername(), ipAddress, "Invalid password");
     }
 }

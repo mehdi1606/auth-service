@@ -17,15 +17,17 @@ public class UserResponse {
     private String id;
     private String username;
     private String email;
-    private String phoneNumber;
     private String firstName;
     private String lastName;
+    private String phoneNumber;
     private Boolean isActive;
+    private Boolean isLocked;
     private Boolean isEmailVerified;
     private Boolean isPhoneVerified;
     private Boolean mfaEnabled;
     private LocalDateTime lastLogin;
+    private Set<String> roles;
+    private Set<String> permissions;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-    private Set<RoleResponse> roles;
 }

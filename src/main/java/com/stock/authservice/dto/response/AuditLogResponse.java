@@ -1,6 +1,5 @@
 package com.stock.authservice.dto.response;
 
-import com.stock.authservice.entity.AuditLog.EventType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,11 +16,13 @@ public class AuditLogResponse {
     private String id;
     private String userId;
     private String username;
-    private EventType eventType;
+    private String action;
+    private String resourceType;
+    private String resourceId;
     private String ipAddress;
     private String userAgent;
-    private Boolean success;
-    private String reason;
-    private String metadata;
+    private String status;
+    private String errorMessage;
+    private String details;
     private LocalDateTime timestamp;
 }

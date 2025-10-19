@@ -6,18 +6,17 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.Set;
-
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class RoleCreateRequest {
+public class PermissionCreateRequest {
 
-    @NotBlank(message = "Role name is required")
+    @NotBlank(message = "Permission name is required")
     private String name;
 
     private String description;
+    private String category;
+    private String resourceType;
     private Boolean isSystem;
-    private Set<String> permissionIds;
 }

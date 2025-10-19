@@ -12,11 +12,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class SessionTerminatedEvent {
-
     private String sessionId;
     private String userId;
     private String username;
-    private String terminationReason; // USER_LOGOUT, ADMIN_FORCED, EXPIRED, SECURITY
-    private String terminatedBy; // userId of who terminated it
     private LocalDateTime terminatedAt;
+    private String reason;
 }

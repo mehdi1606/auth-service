@@ -12,8 +12,8 @@ import java.util.Set;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class PermissionAssignRequest {
+public class UserRoleAssignRequest {
 
-    @NotEmpty(message = "Permission IDs are required")
-    private Set<String> permissionIds;
+    @NotEmpty(message = "Role IDs are required")
+    private Set<String> roleIds;
 }

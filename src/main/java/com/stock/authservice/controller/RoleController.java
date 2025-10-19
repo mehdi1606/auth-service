@@ -4,6 +4,7 @@ import com.stock.authservice.dto.request.PermissionAssignRequest;
 import com.stock.authservice.dto.request.RoleCreateRequest;
 import com.stock.authservice.dto.response.ApiResponse;
 import com.stock.authservice.dto.response.PageResponse;
+import com.stock.authservice.dto.response.PermissionResponse;
 import com.stock.authservice.dto.response.RoleResponse;
 import com.stock.authservice.service.RoleService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,7 +24,7 @@ import java.util.List;
 @RequestMapping("/api/roles")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "Role Management", description = "Role CRUD and permission assignment")
+@Tag(name = "Role Management", description = "Role and permission management endpoints")
 @SecurityRequirement(name = "Bearer Authentication")
 @PreAuthorize("hasRole('ADMIN')")
 public class RoleController {
@@ -33,7 +34,7 @@ public class RoleController {
     // ==================== CREATE ROLE ====================
 
     @PostMapping
-    @Operation(summary = "Create role", description = "Create a new role (Admin only)")
+    @Operation(summary = "Create role", description = "Create a new role")
     public ResponseEntity<ApiResponse<RoleResponse>> createRole(@Valid @RequestBody RoleCreateRequest request) {
         log.info("POST /api/roles - Create role: {}", request.getName());
 
@@ -64,16 +65,16 @@ public class RoleController {
         return ResponseEntity.ok(response);
     }
 
-    // ==================== GET ALL ROLES ====================
+    // ==================== LIST ROLES ====================
 
     @GetMapping
     @Operation(summary = "Get all roles", description = "Get paginated list of all roles")
     public ResponseEntity<PageResponse<RoleResponse>> getAllRoles(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "10") int size,
             @RequestParam(defaultValue = "name") String sortBy,
             @RequestParam(defaultValue = "ASC") String sortDirection) {
-        log.info("GET /api/roles - Get all roles (page: {}, size: {})", page, size);
+        log.info("GET /api/roles - Get all roles - page: {}, size: {}", page, size);
 
         PageResponse<RoleResponse> response = roleService.getAllRoles(page, size, sortBy, sortDirection);
 
@@ -81,11 +82,21 @@ public class RoleController {
     }
 
     @GetMapping("/active")
-    @Operation(summary = "Get active roles", description = "Get list of active roles")
+    @Operation(summary = "Get active roles", description = "Get all active roles")
     public ResponseEntity<List<RoleResponse>> getActiveRoles() {
         log.info("GET /api/roles/active - Get active roles");
 
-        List<RoleResponse> response = roleService.getActiveRoles();
+        List<RoleResponse> response = roleService.getAllActiveRoles();
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/custom")
+    @Operation(summary = "Get custom roles", description = "Get all custom (non-system) roles")
+    public ResponseEntity<List<RoleResponse>> getCustomRoles() {
+        log.info("GET /api/roles/custom - Get custom roles");
+
+        List<RoleResponse> response = roleService.getCustomRoles();
 
         return ResponseEntity.ok(response);
     }
@@ -93,7 +104,7 @@ public class RoleController {
     // ==================== UPDATE ROLE ====================
 
     @PutMapping("/{id}")
-    @Operation(summary = "Update role", description = "Update role details (Admin only)")
+    @Operation(summary = "Update role", description = "Update role details")
     public ResponseEntity<ApiResponse<RoleResponse>> updateRole(
             @PathVariable String id,
             @Valid @RequestBody RoleCreateRequest request) {
@@ -107,7 +118,7 @@ public class RoleController {
     // ==================== DELETE ROLE ====================
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete role", description = "Delete role (Admin only)")
+    @Operation(summary = "Delete role", description = "Delete role by ID")
     public ResponseEntity<ApiResponse<Void>> deleteRole(@PathVariable String id) {
         log.info("DELETE /api/roles/{} - Delete role", id);
 
@@ -116,28 +127,60 @@ public class RoleController {
         return ResponseEntity.ok(response);
     }
 
-    // ==================== PERMISSION ASSIGNMENT ====================
+    // ==================== ROLE ACTIVATION ====================
 
-    @PostMapping("/{roleId}/permissions")
-    @Operation(summary = "Assign permissions", description = "Assign permissions to role (Admin only)")
-    public ResponseEntity<ApiResponse<Void>> assignPermissions(
-            @PathVariable String roleId,
-            @Valid @RequestBody PermissionAssignRequest request) {
-        log.info("POST /api/roles/{}/permissions - Assign permissions to role", roleId);
+    @PatchMapping("/{id}/activate")
+    @Operation(summary = "Activate role", description = "Activate a role")
+    public ResponseEntity<ApiResponse<Void>> activateRole(@PathVariable String id) {
+        log.info("PATCH /api/roles/{}/activate - Activate role", id);
 
-        ApiResponse<Void> response = roleService.assignPermissions(roleId, request);
+        ApiResponse<Void> response = roleService.activateRole(id);
 
         return ResponseEntity.ok(response);
     }
 
-    @DeleteMapping("/{roleId}/permissions")
-    @Operation(summary = "Revoke permissions", description = "Revoke permissions from role (Admin only)")
-    public ResponseEntity<ApiResponse<Void>> revokePermissions(
-            @PathVariable String roleId,
-            @Valid @RequestBody PermissionAssignRequest request) {
-        log.info("DELETE /api/roles/{}/permissions - Revoke permissions from role", roleId);
+    @PatchMapping("/{id}/deactivate")
+    @Operation(summary = "Deactivate role", description = "Deactivate a role")
+    public ResponseEntity<ApiResponse<Void>> deactivateRole(@PathVariable String id) {
+        log.info("PATCH /api/roles/{}/deactivate - Deactivate role", id);
 
-        ApiResponse<Void> response = roleService.revokePermissions(roleId, request);
+        ApiResponse<Void> response = roleService.deactivateRole(id);
+
+        return ResponseEntity.ok(response);
+    }
+
+    // ==================== PERMISSION MANAGEMENT ====================
+
+    @GetMapping("/{id}/permissions")
+    @Operation(summary = "Get role permissions", description = "Get all permissions for a role")
+    public ResponseEntity<List<PermissionResponse>> getRolePermissions(@PathVariable String id) {
+        log.info("GET /api/roles/{}/permissions - Get role permissions", id);
+
+        List<PermissionResponse> response = roleService.getRolePermissions(id);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{id}/permissions")
+    @Operation(summary = "Assign permissions", description = "Assign permissions to a role")
+    public ResponseEntity<ApiResponse<RoleResponse>> assignPermissions(
+            @PathVariable String id,
+            @Valid @RequestBody PermissionAssignRequest request) {
+        log.info("POST /api/roles/{}/permissions - Assign permissions", id);
+
+        ApiResponse<RoleResponse> response = roleService.assignPermissions(id, request);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{roleId}/permissions/{permissionId}")
+    @Operation(summary = "Remove permission", description = "Remove a permission from a role")
+    public ResponseEntity<ApiResponse<RoleResponse>> removePermission(
+            @PathVariable String roleId,
+            @PathVariable String permissionId) {
+        log.info("DELETE /api/roles/{}/permissions/{} - Remove permission", roleId, permissionId);
+
+        ApiResponse<RoleResponse> response = roleService.removePermission(roleId, permissionId);
 
         return ResponseEntity.ok(response);
     }

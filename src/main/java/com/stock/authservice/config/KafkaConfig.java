@@ -47,20 +47,21 @@ public class KafkaConfig {
 
     @Bean
     public NewTopic userLoginTopic() {
-        return TopicBuilder.name(KafkaTopics.USER_LOGIN)
-                .partitions(KafkaTopics.DEFAULT_PARTITIONS)
-                .replicas(KafkaTopics.DEFAULT_REPLICATION_FACTOR)
+        return TopicBuilder
+                .name("auth.user.login")
+                .partitions(3)
+                .replicas(1)
                 .build();
     }
 
     @Bean
     public NewTopic userLogoutTopic() {
-        return TopicBuilder.name(KafkaTopics.USER_LOGOUT)
-                .partitions(KafkaTopics.DEFAULT_PARTITIONS)
-                .replicas(KafkaTopics.DEFAULT_REPLICATION_FACTOR)
+        return TopicBuilder
+                .name("auth.user.logout")
+                .partitions(3)
+                .replicas(1)
                 .build();
     }
-
     @Bean
     public NewTopic userLoginFailedTopic() {
         return TopicBuilder.name(KafkaTopics.USER_LOGIN_FAILED)
@@ -71,9 +72,10 @@ public class KafkaConfig {
 
     @Bean
     public NewTopic userCreatedTopic() {
-        return TopicBuilder.name(KafkaTopics.USER_CREATED)
-                .partitions(KafkaTopics.DEFAULT_PARTITIONS)
-                .replicas(KafkaTopics.DEFAULT_REPLICATION_FACTOR)
+        return TopicBuilder
+                .name("auth.user.created")
+                .partitions(3)
+                .replicas(1)
                 .build();
     }
 

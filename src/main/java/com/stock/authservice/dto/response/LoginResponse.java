@@ -14,8 +14,8 @@ public class LoginResponse {
     private String accessToken;
     private String refreshToken;
     private String tokenType;
-    private Long expiresIn; // seconds
+    private Long expiresIn;
     private UserResponse user;
     private Boolean mfaRequired;
-    private String tempToken; // If MFA is required
+    private String tempToken;
 }

@@ -19,4 +19,6 @@ public class MfaSetupResponse {
     private MfaType mfaType;
     private List<String> backupCodes;
     private String message;
+
 }
+

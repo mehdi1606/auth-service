@@ -20,7 +20,12 @@ public class UserEventPublisher {
     // ==================== USER LIFECYCLE EVENTS ====================
 
     public void publishUserCreated(UserCreatedEvent event) {
-        publishEvent(KafkaTopics.USER_CREATED, event.getUserId(), event);
+        log.info("Publishing user.created event for user: {}", event.getUserId());
+        try {
+            kafkaTemplate.send(KafkaTopics.USER_CREATED, event.getUserId(), event);
+        } catch (Exception e) {
+            log.error("Failed to publish user.created event", e);
+        }
     }
 
     public void publishUserUpdated(UserUpdatedEvent event) {

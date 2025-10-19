@@ -10,10 +10,17 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "users", indexes = {
-        @Index(name = "idx_username", columnList = "username"),
-        @Index(name = "idx_email", columnList = "email")
-})
+@Table(name = "users",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_username", columnNames = "username"),
+                @UniqueConstraint(name = "uk_email", columnNames = "email")
+        },
+        indexes = {
+                @Index(name = "idx_username", columnList = "username"),
+                @Index(name = "idx_email", columnList = "email"),
+                @Index(name = "idx_is_active", columnList = "is_active")
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -24,27 +31,31 @@ public class User {
     @GeneratedValue(strategy = GenerationType.UUID)
     private String id;
 
-    @Column(unique = true, nullable = false, length = 50)
+    @Column(nullable = false, unique = true, length = 50)
     private String username;
 
-    @Column(unique = true, nullable = false, length = 100)
+    @Column(nullable = false, unique = true, length = 100)
     private String email;
+
+    @Column(name = "password_hash", nullable = false, length = 255)
+    private String passwordHash;
+
+    @Column(name = "first_name", length = 100)
+    private String firstName;
+
+    @Column(name = "last_name", length = 100)
+    private String lastName;
 
     @Column(name = "phone_number", length = 20)
     private String phoneNumber;
 
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
-
-    @Column(name = "first_name", length = 50)
-    private String firstName;
-
-    @Column(name = "last_name", length = 50)
-    private String lastName;
-
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private Boolean isActive = true;
+
+    @Column(name = "is_locked", nullable = false)
+    @Builder.Default
+    private Boolean isLocked = false;
 
     @Column(name = "is_email_verified", nullable = false)
     @Builder.Default
@@ -53,47 +64,43 @@ public class User {
     @Column(name = "is_phone_verified", nullable = false)
     @Builder.Default
     private Boolean isPhoneVerified = false;
-    @Column(name = "email_verification_token", length = 200)
-    @ToString.Exclude
-    @EqualsAndHashCode.Exclude
-    private String emailVerificationToken;
-
-    @Column(name = "email_verification_expiry")
-    private LocalDateTime emailVerificationExpiry;
-
-    // Password reset
-    @Column(name = "password_reset_token", length = 200)
-    @ToString.Exclude
-    @EqualsAndHashCode.Exclude
-    private String passwordResetToken;
-
-    @Column(name = "password_reset_expiry")
-    private LocalDateTime passwordResetExpiry;
-    @Column(name = "last_login")
-    private LocalDateTime lastLogin;
-
-    @Column(name = "failed_login_attempts", nullable = false)
-    @Builder.Default
-    private Integer failedLoginAttempts = 0;
-
-    @Column(name = "locked_until")
-    private LocalDateTime lockedUntil;
 
     @Column(name = "mfa_enabled", nullable = false)
     @Builder.Default
     private Boolean mfaEnabled = false;
 
-    @Column(name = "mfa_secret")
+    @Column(name = "mfa_secret", length = 64)
     private String mfaSecret;
 
-    @Column(name = "password_changed_at")
-    private LocalDateTime passwordChangedAt;
+    @Column(name = "failed_login_attempts", nullable = false)
+    @Builder.Default
+    private Integer failedLoginAttempts = 0;
 
-    @Column(name = "preferences", columnDefinition = "jsonb")
-    private String preferences;
+    @Column(name = "last_login")
+    private LocalDateTime lastLogin;
 
-    @Version
-    private Long version;
+    @Column(name = "last_password_change")
+    private LocalDateTime lastPasswordChange;
+
+    @Column(name = "password_expires_at")
+    private LocalDateTime passwordExpiresAt;
+
+    @Column(name = "locked_until")
+    private LocalDateTime lockedUntil;
+
+    @Column(name = "profile_image_url", length = 500)
+    private String profileImageUrl;
+
+    @Column(name = "language", length = 10)
+    @Builder.Default
+    private String language = "en";
+
+    @Column(name = "timezone", length = 50)
+    @Builder.Default
+    private String timezone = "UTC";
+
+    @Column(name = "metadata", columnDefinition = "jsonb")
+    private String metadata;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -102,6 +109,9 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
 
     // Relationships
     @ManyToMany(fetch = FetchType.EAGER)
@@ -114,10 +124,6 @@ public class User {
     private Set<Role> roles = new HashSet<>();
 
     // Helper methods
-    public boolean isAccountLocked() {
-        return lockedUntil != null && lockedUntil.isAfter(LocalDateTime.now());
-    }
-
     public void incrementFailedAttempts() {
         this.failedLoginAttempts++;
     }
@@ -127,7 +133,33 @@ public class User {
         this.lockedUntil = null;
     }
 
-    public void lockAccount(int durationMinutes) {
-        this.lockedUntil = LocalDateTime.now().plusMinutes(durationMinutes);
+    public void lock(int minutes) {
+        this.isLocked = true;
+        this.lockedUntil = LocalDateTime.now().plusMinutes(minutes);
+    }
+
+    public void unlock() {
+        this.isLocked = false;
+        this.lockedUntil = null;
+        this.failedLoginAttempts = 0;
+    }
+
+    public boolean isAccountNonLocked() {
+        if (!isLocked) return true;
+        if (lockedUntil == null) return false;
+
+        if (LocalDateTime.now().isAfter(lockedUntil)) {
+            unlock();
+            return true;
+        }
+        return false;
+    }
+
+    public void addRole(Role role) {
+        this.roles.add(role);
+    }
+
+    public void removeRole(Role role) {
+        this.roles.remove(role);
     }
 }

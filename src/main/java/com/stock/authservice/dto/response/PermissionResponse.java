@@ -14,11 +14,10 @@ import java.time.LocalDateTime;
 public class PermissionResponse {
 
     private String id;
-    private String resource;
-    private String action;
-    private String scope;
+    private String name;
     private String description;
-    private String permissionString; // resource:action:scope
+    private String category;
+    private String resourceType;
+    private Boolean isSystem;
     private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
 }

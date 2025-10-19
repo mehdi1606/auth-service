@@ -43,6 +43,7 @@ public class SessionService {
                     .orElse(null);
 
             if (oldestSession != null) {
+                log.info("Max concurrent sessions reached. Terminating oldest session: {}", oldestSession.getId());
                 terminateSession(oldestSession.getId(), "MAX_SESSIONS_EXCEEDED");
             }
         }
@@ -51,8 +52,7 @@ public class SessionService {
 
         UserSession session = UserSession.builder()
                 .sessionToken(sessionToken)
-                .user(user)
-//                .accessToken(accessToken)
+                .userId(user.getId())
                 .ipAddress(ipAddress)
                 .userAgent(userAgent)
                 .deviceType(deviceType)
@@ -75,8 +75,7 @@ public class SessionService {
                 .expiresAt(session.getExpiresAt())
                 .build());
 
-        log.info("Session created for user: {}", user.getUsername());
-
+        log.info("Session created successfully for user: {} with session ID: {}", user.getUsername(), session.getId());
         return session;
     }
 
@@ -84,11 +83,33 @@ public class SessionService {
 
     @Transactional
     public void updateSessionActivity(String sessionId) {
+        log.debug("Updating session activity for session: {}", sessionId);
+
         sessionRepository.findById(sessionId).ifPresent(session -> {
-            session.setLastActivity(LocalDateTime.now());
-            session.setExpiresAt(DateTimeUtil.addMinutes(LocalDateTime.now(),
-                    SecurityConstants.SESSION_INACTIVITY_TIMEOUT_MINUTES));
-            sessionRepository.save(session);
+            if (session.getIsActive() && !session.isExpired()) {
+                session.setLastActivity(LocalDateTime.now());
+                session.setExpiresAt(DateTimeUtil.addMinutes(LocalDateTime.now(),
+                        SecurityConstants.SESSION_INACTIVITY_TIMEOUT_MINUTES));
+                sessionRepository.save(session);
+                log.debug("Session activity updated for session: {}", sessionId);
+            } else {
+                log.warn("Attempted to update inactive or expired session: {}", sessionId);
+            }
+        });
+    }
+
+    @Transactional
+    public void updateSessionActivityByToken(String sessionToken) {
+        log.debug("Updating session activity by token");
+
+        sessionRepository.findBySessionToken(sessionToken).ifPresent(session -> {
+            if (session.getIsActive() && !session.isExpired()) {
+                session.setLastActivity(LocalDateTime.now());
+                session.setExpiresAt(DateTimeUtil.addMinutes(LocalDateTime.now(),
+                        SecurityConstants.SESSION_INACTIVITY_TIMEOUT_MINUTES));
+                sessionRepository.save(session);
+                log.debug("Session activity updated for session: {}", session.getId());
+            }
         });
     }
 
@@ -101,39 +122,80 @@ public class SessionService {
         UserSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Session", "id", sessionId));
 
-        session.setIsActive(false);
+        if (!session.getIsActive()) {
+            log.warn("Attempted to terminate already inactive session: {}", sessionId);
+            return;
+        }
+
+        session.terminate(reason);
         sessionRepository.save(session);
 
         // Publish event
         authEventPublisher.publishSessionTerminated(SessionTerminatedEvent.builder()
                 .sessionId(session.getId())
-                .userId(session.getUser().getId())
-                .username(session.getUser().getUsername())
-                .terminationReason(reason)
+                .userId(session.getUserId())
+                .username(session.getUser() != null ? session.getUser().getUsername() : "unknown")
                 .terminatedAt(LocalDateTime.now())
+                .reason(reason)
                 .build());
 
-        log.info("Session terminated: {}", sessionId);
+        log.info("Session terminated successfully: {}", sessionId);
     }
 
     @Transactional
-    public void terminateUserSessions(String userId, String reason) {
-        log.info("Terminating all sessions for user: {}", userId);
+    public void terminateSessionByToken(String sessionToken, String reason) {
+        log.info("Terminating session by token - Reason: {}", reason);
+
+        sessionRepository.findBySessionToken(sessionToken).ifPresent(session -> {
+            terminateSession(session.getId(), reason);
+        });
+    }
+
+    @Transactional
+    public void terminateAllUserSessions(String userId, String reason) {
+        log.info("Terminating all sessions for user: {} - Reason: {}", userId, reason);
 
         List<UserSession> activeSessions = sessionRepository.findByUserIdAndIsActive(userId, true);
 
         activeSessions.forEach(session -> terminateSession(session.getId(), reason));
 
-        log.info("All sessions terminated for user: {}", userId);
+        log.info("Terminated {} active sessions for user: {}", activeSessions.size(), userId);
     }
 
-    // ==================== GET SESSIONS ====================
+    @Transactional
+    public void terminateUserSessions(String userId, String userTerminatedAll) {
+        terminateAllUserSessions(userId, "ADMIN_ACTION");
+    }
+
+    // ==================== GET SESSION INFO ====================
+
+    @Transactional(readOnly = true)
+    public SessionResponse getSessionById(String sessionId) {
+        log.debug("Getting session by ID: {}", sessionId);
+
+        UserSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Session", "id", sessionId));
+
+        return mapToSessionResponse(session);
+    }
+
+    @Transactional(readOnly = true)
+    public SessionResponse getSessionByToken(String sessionToken) {
+        log.debug("Getting session by token");
+
+        UserSession session = sessionRepository.findBySessionToken(sessionToken)
+                .orElseThrow(() -> new ResourceNotFoundException("Session", "token", "***"));
+
+        return mapToSessionResponse(session);
+    }
 
     @Transactional(readOnly = true)
     public List<SessionResponse> getUserSessions(String userId) {
-        log.debug("Getting sessions for user: {}", userId);
+        log.debug("Getting all sessions for user: {}", userId);
 
-        return sessionRepository.findByUserId(userId).stream()
+        List<UserSession> sessions = sessionRepository.findByUserId(userId);
+
+        return sessions.stream()
                 .map(this::mapToSessionResponse)
                 .collect(Collectors.toList());
     }
@@ -142,26 +204,91 @@ public class SessionService {
     public List<SessionResponse> getActiveSessions(String userId) {
         log.debug("Getting active sessions for user: {}", userId);
 
-        return sessionRepository.findByUserIdAndIsActive(userId, true).stream()
+        List<UserSession> sessions = sessionRepository.findActiveSessionsByUserId(userId, LocalDateTime.now());
+
+        return sessions.stream()
                 .map(this::mapToSessionResponse)
                 .collect(Collectors.toList());
     }
 
-    // ==================== CLEANUP EXPIRED SESSIONS ====================
+    @Transactional(readOnly = true)
+    public List<SessionResponse> getAllActiveSessions() {
+        log.debug("Getting all active sessions");
+
+        List<UserSession> sessions = sessionRepository.findByUserIdAndIsActive(null, true);
+
+        return sessions.stream()
+                .filter(session -> !session.isExpired())
+                .map(this::mapToSessionResponse)
+                .collect(Collectors.toList());
+    }
+
+    // ==================== SESSION VALIDATION ====================
+
+    @Transactional(readOnly = true)
+    public boolean isSessionValid(String sessionId) {
+        return sessionRepository.findById(sessionId)
+                .map(UserSession::isValid)
+                .orElse(false);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isSessionOwner(String sessionId, String userId) {
+        return sessionRepository.findById(sessionId)
+                .map(session -> session.getUserId().equals(userId))
+                .orElse(false);
+    }
+
+    // ==================== SESSION CLEANUP ====================
 
     @Transactional
     public void cleanupExpiredSessions() {
         log.info("Cleaning up expired sessions");
 
         LocalDateTime now = LocalDateTime.now();
-        List<UserSession> expiredSessions = sessionRepository.findByExpiresAtBeforeAndIsActive(now, true);
+        List<UserSession> expiredSessions = sessionRepository.findByUserIdAndIsActive(null, true).stream()
+                .filter(session -> session.getExpiresAt().isBefore(now))
+                .collect(Collectors.toList());
 
-        expiredSessions.forEach(session -> terminateSession(session.getId(), "EXPIRED"));
+        expiredSessions.forEach(session -> {
+            session.terminate("SESSION_EXPIRED");
+            sessionRepository.save(session);
+            log.debug("Expired session terminated: {}", session.getId());
+        });
 
         log.info("Cleaned up {} expired sessions", expiredSessions.size());
     }
 
-    // ==================== MAPPER ====================
+    @Transactional
+    public void deleteOldSessions(int daysOld) {
+        log.info("Deleting sessions older than {} days", daysOld);
+
+        LocalDateTime threshold = LocalDateTime.now().minusDays(daysOld);
+        sessionRepository.deleteExpiredSessions(threshold);
+
+        log.info("Old sessions deleted successfully");
+    }
+
+    // ==================== SESSION STATISTICS ====================
+
+    @Transactional(readOnly = true)
+    public long countActiveSessions() {
+        return sessionRepository.findByUserIdAndIsActive(null, true).stream()
+                .filter(session -> !session.isExpired())
+                .count();
+    }
+
+    @Transactional(readOnly = true)
+    public long countUserActiveSessions(String userId) {
+        return sessionRepository.findActiveSessionsByUserId(userId, LocalDateTime.now()).size();
+    }
+
+    @Transactional(readOnly = true)
+    public long countTotalSessions() {
+        return sessionRepository.count();
+    }
+
+    // ==================== HELPER METHODS ====================
 
     private SessionResponse mapToSessionResponse(UserSession session) {
         return SessionResponse.builder()

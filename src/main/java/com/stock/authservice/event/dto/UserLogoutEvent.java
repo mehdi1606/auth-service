@@ -12,11 +12,9 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 @Builder
 public class UserLogoutEvent {
-
     private String userId;
     private String username;
     private String sessionId;
-    private String ipAddress;
     private LocalDateTime logoutTime;
-    private String logoutReason; // MANUAL, TIMEOUT, FORCED
+    private String reason;
 }

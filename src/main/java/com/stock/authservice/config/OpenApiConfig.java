@@ -30,7 +30,7 @@ public class OpenApiConfig {
                                 .name("Apache 2.0")
                                 .url("https://www.apache.org/licenses/LICENSE-2.0.html")))
                 .servers(List.of(
-                        new Server().url("http://localhost:8080").description("Local Development"),
+                        new Server().url("http://localhost:8081").description("Local Development"),
                         new Server().url("https://api.stockmanagement.com").description("Production")
                 ))
                 .components(new Components()

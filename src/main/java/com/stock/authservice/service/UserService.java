@@ -1,18 +1,15 @@
 package com.stock.authservice.service;
 
-import com.stock.authservice.constants.RoleConstants;
 import com.stock.authservice.dto.request.UserCreateRequest;
+import com.stock.authservice.dto.request.UserRoleAssignRequest;
 import com.stock.authservice.dto.request.UserUpdateRequest;
 import com.stock.authservice.dto.response.ApiResponse;
 import com.stock.authservice.dto.response.PageResponse;
-import com.stock.authservice.dto.response.RoleResponse;
 import com.stock.authservice.dto.response.UserResponse;
 import com.stock.authservice.entity.Role;
 import com.stock.authservice.entity.User;
 import com.stock.authservice.event.UserEventPublisher;
 import com.stock.authservice.event.dto.UserCreatedEvent;
-import com.stock.authservice.event.dto.UserDeletedEvent;
-import com.stock.authservice.event.dto.UserUpdatedEvent;
 import com.stock.authservice.exception.DuplicateResourceException;
 import com.stock.authservice.exception.ResourceNotFoundException;
 import com.stock.authservice.repository.RoleRepository;
@@ -29,8 +26,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -42,10 +39,10 @@ public class UserService {
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
-    private final SecurityContextHelper securityContextHelper;
     private final UserEventPublisher userEventPublisher;
+    private final SecurityContextHelper securityContextHelper;
 
-    // ==================== CRUD OPERATIONS ====================
+    // ==================== CREATE USER ====================
 
     @Transactional
     public ApiResponse<UserResponse> createUser(UserCreateRequest request) {
@@ -78,9 +75,7 @@ public class UserService {
 
         // Assign roles
         if (request.getRoleIds() != null && !request.getRoleIds().isEmpty()) {
-            Set<Role> roles = roleRepository.findAllById(request.getRoleIds())
-                    .stream()
-                    .collect(Collectors.toSet());
+            Set<Role> roles = new HashSet<>(roleRepository.findAllById(request.getRoleIds()));
             user.setRoles(roles);
         } else {
             assignDefaultRole(user);
@@ -104,6 +99,8 @@ public class UserService {
 
         return ApiResponse.success("User created successfully", mapToUserResponse(user));
     }
+
+    // ==================== GET USER ====================
 
     @Transactional(readOnly = true)
     public UserResponse getUserById(String id) {
@@ -129,43 +126,49 @@ public class UserService {
     public PageResponse<UserResponse> getAllUsers(int page, int size, String sortBy, String sortDirection) {
         log.debug("Getting all users - page: {}, size: {}", page, size);
 
-        Sort.Direction direction = sortDirection.equalsIgnoreCase("ASC") ? Sort.Direction.ASC : Sort.Direction.DESC;
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+        Sort.Direction direction = sortDirection.equalsIgnoreCase("ASC") ?
+                Sort.Direction.ASC : Sort.Direction.DESC;
 
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
         Page<User> userPage = userRepository.findAll(pageable);
 
+        List<UserResponse> content = userPage.getContent().stream()
+                .map(this::mapToUserResponse)
+                .collect(Collectors.toList());
+
         return PageResponse.<UserResponse>builder()
-                .content(userPage.getContent().stream()
-                        .map(this::mapToUserResponse)
-                        .collect(Collectors.toList()))
+                .content(content)
                 .pageNumber(userPage.getNumber())
                 .pageSize(userPage.getSize())
                 .totalElements(userPage.getTotalElements())
                 .totalPages(userPage.getTotalPages())
-                .last(userPage.isLast())
-                .first(userPage.isFirst())
+                .isLast(userPage.isLast())
                 .build();
     }
 
     @Transactional(readOnly = true)
-    public PageResponse<UserResponse> searchUsers(String query, int page, int size) {
-        log.debug("Searching users with query: {}", query);
+    public PageResponse<UserResponse> getActiveUsers(int page, int size) {
+        log.debug("Getting active users - page: {}, size: {}", page, size);
 
-        Pageable pageable = PageRequest.of(page, size);
-        Page<User> userPage = userRepository.searchUsers(query, pageable);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "username"));
+        Page<User> userPage = userRepository.findAll(pageable);
+
+        List<UserResponse> content = userPage.getContent().stream()
+                .filter(User::getIsActive)
+                .map(this::mapToUserResponse)
+                .collect(Collectors.toList());
 
         return PageResponse.<UserResponse>builder()
-                .content(userPage.getContent().stream()
-                        .map(this::mapToUserResponse)
-                        .collect(Collectors.toList()))
+                .content(content)
                 .pageNumber(userPage.getNumber())
                 .pageSize(userPage.getSize())
-                .totalElements(userPage.getTotalElements())
+                .totalElements((long) content.size())
                 .totalPages(userPage.getTotalPages())
-                .last(userPage.isLast())
-                .first(userPage.isFirst())
+                .isLast(userPage.isLast())
                 .build();
     }
+
+    // ==================== UPDATE USER ====================
 
     @Transactional
     public ApiResponse<UserResponse> updateUser(String id, UserUpdateRequest request) {
@@ -174,68 +177,31 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
 
-        Map<String, Object> changedFields = new HashMap<>();
-
-        // Update email
+        // Update email if changed
         if (request.getEmail() != null && !request.getEmail().equals(user.getEmail())) {
             if (userRepository.existsByEmail(request.getEmail())) {
                 throw new DuplicateResourceException("User", "email", request.getEmail());
             }
-            changedFields.put("email", request.getEmail());
             user.setEmail(request.getEmail());
-            user.setIsEmailVerified(false); // Need to re-verify
+            user.setIsEmailVerified(false); // Require re-verification
         }
 
         // Update other fields
-        if (request.getFirstName() != null) {
-            changedFields.put("firstName", request.getFirstName());
-            user.setFirstName(request.getFirstName());
-        }
-
-        if (request.getLastName() != null) {
-            changedFields.put("lastName", request.getLastName());
-            user.setLastName(request.getLastName());
-        }
-
-        if (request.getPhoneNumber() != null) {
-            changedFields.put("phoneNumber", request.getPhoneNumber());
-            user.setPhoneNumber(request.getPhoneNumber());
-        }
-
-        if (request.getIsActive() != null) {
-            changedFields.put("isActive", request.getIsActive());
-            user.setIsActive(request.getIsActive());
-        }
-// Update roles
-        if (request.getRoleIds() != null) {
-            Set<Role> roles = roleRepository.findAllById(request.getRoleIds())
-                    .stream()
-                    .collect(Collectors.toSet());
-            changedFields.put("roles", request.getRoleIds());
-            user.setRoles(roles);
-        }
-
-        // Update preferences
-        if (request.getPreferences() != null) {
-            changedFields.put("preferences", request.getPreferences());
-            user.setPreferences(request.getPreferences());
-        }
+        if (request.getFirstName() != null) user.setFirstName(request.getFirstName());
+        if (request.getLastName() != null) user.setLastName(request.getLastName());
+        if (request.getPhoneNumber() != null) user.setPhoneNumber(request.getPhoneNumber());
+        if (request.getLanguage() != null) user.setLanguage(request.getLanguage());
+        if (request.getTimezone() != null) user.setTimezone(request.getTimezone());
+        if (request.getProfileImageUrl() != null) user.setProfileImageUrl(request.getProfileImageUrl());
 
         user = userRepository.save(user);
-
-        // Publish event
-        userEventPublisher.publishUserUpdated(UserUpdatedEvent.builder()
-                .userId(user.getId())
-                .username(user.getUsername())
-                .changedFields(changedFields)
-                .updatedBy(securityContextHelper.getCurrentUsername())
-                .updatedAt(LocalDateTime.now())
-                .build());
 
         log.info("User updated successfully: {}", user.getUsername());
 
         return ApiResponse.success("User updated successfully", mapToUserResponse(user));
     }
+
+    // ==================== DELETE USER ====================
 
     @Transactional
     public ApiResponse<Void> deleteUser(String id) {
@@ -244,27 +210,17 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
 
-        String username = user.getUsername();
-        String email = user.getEmail();
+        // Soft delete
+        user.setIsActive(false);
+        user.setDeletedAt(LocalDateTime.now());
+        userRepository.save(user);
 
-        userRepository.delete(user);
-
-        // Publish event
-        userEventPublisher.publishUserDeleted(UserDeletedEvent.builder()
-                .userId(id)
-                .username(username)
-                .email(email)
-                .deletedBy(securityContextHelper.getCurrentUsername())
-                .deletedAt(LocalDateTime.now())
-                .deletionReason("Manual deletion")
-                .build());
-
-        log.info("User deleted successfully: {}", username);
+        log.info("User deleted successfully: {}", user.getUsername());
 
         return ApiResponse.success("User deleted successfully", null);
     }
 
-    // ==================== ACTIVATION / DEACTIVATION ====================
+    // ==================== USER ACTIVATION ====================
 
     @Transactional
     public ApiResponse<Void> activateUser(String id) {
@@ -274,12 +230,8 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
 
         user.setIsActive(true);
-        user.setLockedUntil(null);
-        user.setFailedLoginAttempts(0);
+        user.setDeletedAt(null);
         userRepository.save(user);
-
-        // Publish event
-        userEventPublisher.publishUserActivated(user.getId(), user.getUsername());
 
         log.info("User activated successfully: {}", user.getUsername());
 
@@ -296,37 +248,69 @@ public class UserService {
         user.setIsActive(false);
         userRepository.save(user);
 
-        // Publish event
-        userEventPublisher.publishUserDeactivated(user.getId(), user.getUsername());
-
         log.info("User deactivated successfully: {}", user.getUsername());
 
         return ApiResponse.success("User deactivated successfully", null);
     }
 
-    // ==================== ROLE ASSIGNMENT ====================
+    // ==================== ACCOUNT LOCK ====================
 
     @Transactional
-    public ApiResponse<Void> assignRoleToUser(String userId, String roleId) {
-        log.info("Assigning role {} to user {}", roleId, userId);
+    public ApiResponse<Void> lockUser(String id) {
+        log.info("Locking user: {}", id);
+
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
+
+        user.lock(0); // Lock indefinitely
+        userRepository.save(user);
+
+        log.info("User locked successfully: {}", user.getUsername());
+
+        return ApiResponse.success("User locked successfully", null);
+    }
+
+    @Transactional
+    public ApiResponse<Void> unlockUser(String id) {
+        log.info("Unlocking user: {}", id);
+
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
+
+        user.unlock();
+        userRepository.save(user);
+
+        log.info("User unlocked successfully: {}", user.getUsername());
+
+        return ApiResponse.success("User unlocked successfully", null);
+    }
+
+    // ==================== ROLE MANAGEMENT ====================
+
+    @Transactional
+    public ApiResponse<UserResponse> assignRoles(String userId, UserRoleAssignRequest request) {
+        log.info("Assigning roles to user: {}", userId);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
 
-        Role role = roleRepository.findById(roleId)
-                .orElseThrow(() -> new ResourceNotFoundException("Role", "id", roleId));
+        Set<Role> roles = new HashSet<>(roleRepository.findAllById(request.getRoleIds()));
 
-        user.getRoles().add(role);
-        userRepository.save(user);
+        if (roles.size() != request.getRoleIds().size()) {
+            throw new ResourceNotFoundException("Some roles not found");
+        }
 
-        log.info("Role assigned successfully");
+        user.getRoles().addAll(roles);
+        user = userRepository.save(user);
 
-        return ApiResponse.success("Role assigned successfully", null);
+        log.info("Roles assigned successfully to user: {}", user.getUsername());
+
+        return ApiResponse.success("Roles assigned successfully", mapToUserResponse(user));
     }
 
     @Transactional
-    public ApiResponse<Void> removeRoleFromUser(String userId, String roleId) {
-        log.info("Removing role {} from user {}", roleId, userId);
+    public ApiResponse<UserResponse> removeRole(String userId, String roleId) {
+        log.info("Removing role {} from user: {}", roleId, userId);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
@@ -335,52 +319,58 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("Role", "id", roleId));
 
         user.getRoles().remove(role);
-        userRepository.save(user);
+        user = userRepository.save(user);
 
-        log.info("Role removed successfully");
+        log.info("Role removed successfully from user: {}", user.getUsername());
 
-        return ApiResponse.success("Role removed successfully", null);
+        return ApiResponse.success("Role removed successfully", mapToUserResponse(user));
     }
 
     // ==================== HELPER METHODS ====================
 
     public void assignDefaultRole(User user) {
-        Role defaultRole = roleRepository.findByName(RoleConstants.USER)
-                .orElseThrow(() -> new ResourceNotFoundException("Role", "name", RoleConstants.USER));
+        Role userRole = roleRepository.findByName("USER")
+                .orElseGet(() -> {
+                    Role newRole = Role.builder()
+                            .name("USER")
+                            .description("Default user role")
+                            .isSystem(true)
+                            .build();
+                    return roleRepository.save(newRole);
+                });
 
-        user.getRoles().add(defaultRole);
+        Set<Role> roles = new HashSet<>();
+        roles.add(userRole);
+        user.setRoles(roles);
     }
 
     public UserResponse mapToUserResponse(User user) {
+        Set<String> roleNames = user.getRoles().stream()
+                .map(Role::getName)
+                .collect(Collectors.toSet());
+
+        Set<String> permissions = user.getRoles().stream()
+                .flatMap(role -> role.getPermissions().stream())
+                .map(permission -> permission.getName())
+                .collect(Collectors.toSet());
+
         return UserResponse.builder()
                 .id(user.getId())
                 .username(user.getUsername())
                 .email(user.getEmail())
-                .phoneNumber(user.getPhoneNumber())
                 .firstName(user.getFirstName())
                 .lastName(user.getLastName())
+                .phoneNumber(user.getPhoneNumber())
                 .isActive(user.getIsActive())
+                .isLocked(user.getIsLocked())
                 .isEmailVerified(user.getIsEmailVerified())
                 .isPhoneVerified(user.getIsPhoneVerified())
                 .mfaEnabled(user.getMfaEnabled())
                 .lastLogin(user.getLastLogin())
+                .roles(roleNames)
+                .permissions(permissions)
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())
-                .roles(user.getRoles().stream()
-                        .map(this::mapToRoleResponse)
-                        .collect(Collectors.toSet()))
-                .build();
-    }
-
-    private RoleResponse mapToRoleResponse(Role role) {
-        return RoleResponse.builder()
-                .id(role.getId())
-                .name(role.getName())
-                .description(role.getDescription())
-                .isSystem(role.getIsSystem())
-                .isActive(role.getIsActive())
-                .createdAt(role.getCreatedAt())
-                .updatedAt(role.getUpdatedAt())
                 .build();
     }
 }

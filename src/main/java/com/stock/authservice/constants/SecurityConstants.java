@@ -33,7 +33,9 @@ public final class SecurityConstants {
     public static final int MAX_FAILED_LOGIN_ATTEMPTS = 5;
     public static final int ACCOUNT_LOCKOUT_DURATION_MINUTES = 30;
     public static final int FAILED_ATTEMPTS_RESET_MINUTES = 60; // Reset counter after 1 hour
-
+    // Session Constants
+    public static final int MAX_CONCURRENT_SESSIONS = 5;
+    public static final int SESSION_INACTIVITY_TIMEOUT_MINUTES = 30;
     // Rate Limiting
     public static final int LOGIN_RATE_LIMIT = 5; // 5 attempts
     public static final int LOGIN_RATE_LIMIT_WINDOW_MINUTES = 15; // per 15 minutes
@@ -45,8 +47,7 @@ public final class SecurityConstants {
     public static final int TOKEN_REFRESH_RATE_LIMIT_WINDOW_MINUTES = 60; // per hour
 
     // Session Management
-    public static final int MAX_CONCURRENT_SESSIONS = 5;
-    public static final int SESSION_INACTIVITY_TIMEOUT_MINUTES = 30;
+
     public static final int SESSION_CLEANUP_INTERVAL_HOURS = 24;
 
     // MFA
@@ -54,6 +55,9 @@ public final class SecurityConstants {
     public static final int MFA_CODE_VALIDITY_SECONDS = 30; // TOTP window
     public static final int MFA_BACKUP_CODES_COUNT = 10;
     public static final int MFA_BACKUP_CODE_LENGTH = 8;
+    // Account Lock Constants
+    public static final int ACCOUNT_LOCK_DURATION_MINUTES = 30;
+
 
     // Username Policy
     public static final int USERNAME_MIN_LENGTH = 3;

@@ -19,7 +19,7 @@ public class RoleResponse {
     private String description;
     private Boolean isSystem;
     private Boolean isActive;
+    private Set<PermissionResponse> permissions;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-    private Set<PermissionResponse> permissions;
 }

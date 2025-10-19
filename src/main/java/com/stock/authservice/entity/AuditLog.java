@@ -7,11 +7,13 @@ import org.hibernate.annotations.CreationTimestamp;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "audit_logs", indexes = {
-        @Index(name = "idx_audit_user", columnList = "user_id"),
-        @Index(name = "idx_audit_event_type", columnList = "event_type"),
-        @Index(name = "idx_audit_timestamp", columnList = "timestamp")
-})
+@Table(name = "audit_logs",
+        indexes = {
+                @Index(name = "idx_user_id", columnList = "user_id"),
+                @Index(name = "idx_action", columnList = "action"),
+                @Index(name = "idx_timestamp", columnList = "timestamp")
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -25,12 +27,17 @@ public class AuditLog {
     @Column(name = "user_id")
     private String userId;
 
-    @Column(name = "username", length = 50)
+    @Column(name = "username", length = 100)
     private String username;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "event_type", nullable = false, length = 50)
-    private EventType eventType;
+    @Column(name = "action", nullable = false, length = 100)
+    private String action;
+
+    @Column(name = "resource_type", length = 100)
+    private String resourceType;
+
+    @Column(name = "resource_id", length = 100)
+    private String resourceId;
 
     @Column(name = "ip_address", length = 45)
     private String ipAddress;
@@ -38,43 +45,38 @@ public class AuditLog {
     @Column(name = "user_agent", length = 500)
     private String userAgent;
 
-    @Column(nullable = false)
-    @Builder.Default
-    private Boolean success = true;
+    @Column(name = "status", length = 50)
+    private String status;
 
-    @Column(length = 500)
-    private String reason;
+    @Column(name = "error_message", length = 500)
+    private String errorMessage;
 
-    @Column(columnDefinition = "jsonb")
-    private String metadata;
+    @Column(name = "details", columnDefinition = "jsonb")
+    private String details;
 
     @CreationTimestamp
-    @Column(nullable = false, updatable = false)
+    @Column(name = "timestamp", nullable = false, updatable = false)
     private LocalDateTime timestamp;
 
-    // Event Types Enum
-    public enum EventType {
-        LOGIN,
-        LOGOUT,
-        LOGIN_FAILED,
-        PASSWORD_CHANGE,
-        PASSWORD_RESET_REQUEST,
-        PASSWORD_RESET,
-        MFA_ENABLED,
-        MFA_DISABLED,
-        MFA_VERIFY_SUCCESS,
-        MFA_VERIFY_FAILED,
-        ACCOUNT_CREATED,
-        ACCOUNT_UPDATED,
-        ACCOUNT_DELETED,
-        ACCOUNT_LOCKED,
-        ACCOUNT_UNLOCKED,
-        ROLE_ASSIGNED,
-        ROLE_REMOVED,
-        PERMISSION_GRANTED,
-        PERMISSION_REVOKED,
-        TOKEN_REFRESH,
-        EMAIL_VERIFIED,
-        PHONE_VERIFIED
+    // Helper factory methods
+    public static AuditLog success(String userId, String username, String action, String ipAddress) {
+        return AuditLog.builder()
+                .userId(userId)
+                .username(username)
+                .action(action)
+                .ipAddress(ipAddress)
+                .status("SUCCESS")
+                .build();
+    }
+
+    public static AuditLog failure(String userId, String username, String action, String ipAddress, String error) {
+        return AuditLog.builder()
+                .userId(userId)
+                .username(username)
+                .action(action)
+                .ipAddress(ipAddress)
+                .status("FAILURE")
+                .errorMessage(error)
+                .build();
     }
 }
