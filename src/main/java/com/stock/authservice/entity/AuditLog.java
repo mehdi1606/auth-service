@@ -51,7 +51,7 @@ public class AuditLog {
     @Column(name = "error_message", length = 500)
     private String errorMessage;
 
-    @Column(name = "details", columnDefinition = "jsonb")
+    @Column(name = "details", columnDefinition = "text")
     private String details;
 
     @CreationTimestamp

@@ -22,7 +22,6 @@ public interface MfaSecretRepository extends JpaRepository<MfaSecret, String> {
     List<MfaSecret> findByIsVerified(Boolean isVerified);
 
     Optional<MfaSecret> findByUserIdAndIsVerified(String userId, Boolean isVerified);
-    Optional<MfaSecret> findByUserIdAndIsActive(String userId, boolean isActive);
 
     // MFA Type queries
     List<MfaSecret> findByMfaType(MfaType mfaType);

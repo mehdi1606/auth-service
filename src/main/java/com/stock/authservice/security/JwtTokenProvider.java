@@ -50,7 +50,7 @@ public class JwtTokenProvider {
                 .setIssuedAt(now)
                 .setExpiration(expiryDate)
                 .setIssuer(jwtConfig.getIssuer())
-                .signWith(getSigningKey(), SignatureAlgorithm.HS512)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
                 .compact();
     }
 
@@ -65,7 +65,7 @@ public class JwtTokenProvider {
                 .setExpiration(expiryDate)
                 .setIssuer(jwtConfig.getIssuer())
                 .claim("tokenType", "refresh")
-                .signWith(getSigningKey(), SignatureAlgorithm.HS512)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
                 .compact();
     }
 
@@ -80,7 +80,7 @@ public class JwtTokenProvider {
                 .setExpiration(expiryDate)
                 .setIssuer(jwtConfig.getIssuer())
                 .claim("tokenType", "mfa_temp")
-                .signWith(getSigningKey(), SignatureAlgorithm.HS512)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
                 .compact();
     }
 

@@ -38,7 +38,7 @@ public class MfaSecret {
     @Column(name = "verified_at")
     private LocalDateTime verifiedAt;
 
-    @Column(name = "backup_codes", columnDefinition = "jsonb")
+    @Column(name = "backup_codes", columnDefinition = "text")
     private String backupCodes;
 
     @CreationTimestamp

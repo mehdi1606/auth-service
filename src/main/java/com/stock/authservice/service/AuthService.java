@@ -3,6 +3,7 @@ package com.stock.authservice.service;
 import com.stock.authservice.constants.SecurityConstants;
 import com.stock.authservice.dto.request.*;
 import com.stock.authservice.dto.response.*;
+import com.stock.authservice.entity.EmailVerificationToken;
 import com.stock.authservice.entity.RefreshToken;
 import com.stock.authservice.entity.User;
 import com.stock.authservice.entity.UserSession;
@@ -10,6 +11,7 @@ import com.stock.authservice.event.AuthEventPublisher;
 import com.stock.authservice.event.dto.UserLoginEvent;
 import com.stock.authservice.event.dto.UserLogoutEvent;
 import com.stock.authservice.exception.*;
+import com.stock.authservice.repository.EmailVerificationTokenRepository;
 import com.stock.authservice.repository.UserRepository;
 import com.stock.authservice.security.CustomUserDetails;
 import com.stock.authservice.security.JwtTokenProvider;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -41,7 +44,8 @@ public class AuthService {
     private final AuthEventPublisher authEventPublisher;
     private final MfaService mfaService;
     private final UserService userService;
-
+    private final EmailService emailService;
+    private final EmailVerificationTokenRepository verificationTokenRepository;
     // ==================== LOGIN ====================
 
     @Transactional
@@ -84,6 +88,8 @@ public class AuthService {
                     )
             );
 
+            log.info("Authentication successful for user: {}", user.getUsername());
+
             // Reset failed attempts on successful login
             user.resetFailedAttempts();
             userRepository.save(user);
@@ -91,7 +97,6 @@ public class AuthService {
             // Check MFA
             if (mfaService.isMfaRequired(user)) {
                 String tempToken = jwtTokenProvider.generateMfaTempToken(user.getUsername());
-
                 log.info("MFA required for user: {}", user.getUsername());
 
                 return LoginResponse.builder()
@@ -101,10 +106,14 @@ public class AuthService {
             }
 
             // Generate tokens
+            log.debug("Generating access token...");
             String accessToken = jwtTokenProvider.generateAccessToken(authentication);
+
+            log.debug("Creating refresh token...");
             RefreshToken refreshToken = tokenService.createRefreshToken(user, ipAddress, userAgent);
 
             // Create session
+            log.debug("Creating user session...");
             UserSession session = sessionService.createSession(user, accessToken, ipAddress, userAgent, request.getDeviceType());
 
             // Update last login
@@ -138,10 +147,16 @@ public class AuthService {
                     .mfaRequired(false)
                     .build();
 
-        } catch (Exception e) {
-            // Increment failed login attempts
+        } catch (org.springframework.security.authentication.BadCredentialsException e) {
+            // Wrong password - specific handling
+            log.error("Bad credentials for user: {}", user.getUsername());
             handleFailedLogin(user, ipAddress, userAgent);
             throw new InvalidCredentialsException();
+        } catch (Exception e) {
+            // Log the actual error for debugging
+            log.error("Login failed for user: {} - Error: {}", user.getUsername(), e.getMessage(), e);
+            handleFailedLogin(user, ipAddress, userAgent);
+            throw new RuntimeException("Login failed: " + e.getMessage(), e);
         }
     }
 
@@ -170,7 +185,7 @@ public class AuthService {
                 .lastName(request.getLastName())
                 .phoneNumber(request.getPhoneNumber())
                 .isActive(true)
-                .isEmailVerified(false)
+                .isEmailVerified(false)  // Not verified yet
                 .isPhoneVerified(false)
                 .mfaEnabled(false)
                 .failedLoginAttempts(0)
@@ -180,6 +195,27 @@ public class AuthService {
         userService.assignDefaultRole(user);
 
         user = userRepository.save(user);
+
+        // Create email verification token
+        String token = UUID.randomUUID().toString();
+        EmailVerificationToken verificationToken = EmailVerificationToken.builder()
+                .userId(user.getId())
+                .email(user.getEmail())
+                .token(token)
+                .expiresAt(LocalDateTime.now().plusHours(24)) // Token valid for 24 hours
+                .isUsed(false)
+                .build();
+
+        verificationTokenRepository.save(verificationToken);
+
+        // Send verification email
+        try {
+            emailService.sendVerificationEmail(user.getEmail(), token);
+            log.info("Verification email sent to: {}", user.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to send verification email to: {}", user.getEmail(), e);
+            // Don't fail registration if email fails
+        }
 
         log.info("User registered successfully: {}", user.getUsername());
 
@@ -367,13 +403,43 @@ public class AuthService {
     public ApiResponse<Void> verifyEmail(String token) {
         log.info("Email verification request with token");
 
-        // TODO: Implement email verification
-        // 1. Find token in database
-        // 2. Check if token is expired
-        // 3. Mark user email as verified
-        // 4. Delete/invalidate token
+        // Find token
+        EmailVerificationToken verificationToken = verificationTokenRepository.findByToken(token)
+                .orElseThrow(() -> new ResourceNotFoundException("Verification token not found or expired"));
 
-        throw new UnsupportedOperationException("Email verification not implemented yet");
+        // Check if already used
+        if (verificationToken.getIsUsed()) {
+            throw new IllegalStateException("This verification link has already been used");
+        }
+
+        // Check if expired
+        if (verificationToken.isExpired()) {
+            throw new IllegalStateException("This verification link has expired");
+        }
+
+        // Find user
+        User user = userRepository.findById(verificationToken.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", "id", verificationToken.getUserId()));
+
+        // Mark email as verified
+        user.setIsEmailVerified(true);
+        userRepository.save(user);
+
+        // Mark token as used
+        verificationToken.markAsVerified();
+        verificationTokenRepository.save(verificationToken);
+
+        // Send welcome email
+        try {
+            emailService.sendWelcomeEmail(user.getEmail(), user.getUsername());
+        } catch (Exception e) {
+            log.error("Failed to send welcome email", e);
+            // Don't fail verification if welcome email fails
+        }
+
+        log.info("Email verified successfully for user: {}", user.getUsername());
+
+        return ApiResponse.success("Email verified successfully", null);
     }
 
     // ==================== HELPER METHODS ====================

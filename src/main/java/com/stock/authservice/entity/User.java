@@ -99,7 +99,7 @@ public class User {
     @Builder.Default
     private String timezone = "UTC";
 
-    @Column(name = "metadata", columnDefinition = "jsonb")
+    @Column(name = "metadata", columnDefinition = "TEXT")
     private String metadata;
 
     @CreationTimestamp

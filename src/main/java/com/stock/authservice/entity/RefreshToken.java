@@ -37,7 +37,7 @@ public class RefreshToken {
     @Column(name = "revoked_at")
     private LocalDateTime revokedAt;
 
-    @Column(name = "device_info", columnDefinition = "jsonb")
+    @Column(name = "device_info", columnDefinition = "text")
     private String deviceInfo;
 
     @Column(name = "ip_address", length = 45)
